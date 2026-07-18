@@ -1,0 +1,15 @@
+name = "hosq-notations-bot"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# After creating D1 in Cloudflare, put the real database_id here
+# (Workers → D1 → your DB → Settings), or set the binding in the dashboard.
+[[d1_databases]]
+binding = "DB"
+database_name = "notations-bot"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# Secrets (set in dashboard or via wrangler secret put):
+# - TELEGRAM_BOT_TOKEN
+# - TELEGRAM_WEBHOOK_SECRET (optional)
+# - ADMIN_PASSWORD (optional; default in code: bigbrother)
