@@ -1,7 +1,7 @@
 {
   "en": {
     "_note": "Fill empty strings (\"\"). Keep {placeholders} like {n}, {name}, {loc} unchanged. Keys starting with btn are button labels.",
-    "welcome": "Welcome to Notations '26 ✨\nIt's your companion for the Laboratory & Festival 🌿\nTap Start to begin.",
+    "welcome": "Welcome to Notations '26 ✨\nIt's your companion for the Laboratory & Festival\n",
     "startHint": "Tap the button below to start 🌿",
     "unknownCmd": "Hmm, I don’t know this command 👀\nTry /start",
     "stale": "This button feels a little ancient 🌚\nOpen /start again.",
@@ -16,23 +16,23 @@
     "btnNo": "no",
     "accessDenied": "This part of the bot is only open to the hosq team 🌙",
     "comingSoon": "coming soon 🌱",
-    "regNamePrompt": "What’s your name? (in English) 🌿",
+    "regNamePrompt": "What’s your name? (in English)",
     "regMatchFound": "Nice to meet you, {name}! 👋",
     "regMatchConfirm": "Is this you? 👀",
     "regMatchWrong": "No worries 🌿\nLet’s find the right profile.",
     "regPickNameTitle": "Find your Notations profile ✨",
     "regPickNamePrompt": "Choose your name from the list below.",
-    "regSuggestionsTitle": "Closest matches 👀\nIs one of these you?",
+    "regSuggestionsTitle": "Closest matches 👀\nTap your name:",
     "regSearchPrompt": "Type your real or artistic name, so we can find you in the Notations database 🙂",
-    "regSearchNoResults": "We couldn’t find a matching profile 💔\nTry another spelling — or write to Uliana: @junully",
+    "regSearchNoResults": "I couldn’t find that name 💔\nTry another spelling — or tap the button below.",
+    "regNoMatches": "I couldn’t find that name 💔\nTry another spelling — or tap the button below.",
     "regNotFoundFinal": "I can’t find you in the Notations database 💔\nPlease write to Uliana: @junully",
     "regLinkedOk": "You’re in ✨\nWelcome to Notations!",
     "regAlreadyLinked": "This profile is already linked to another Telegram account 🥺\nPlease contact Uliana: @junully",
-    "regCheckingTelegram": "Checking your Telegram username in the database…",
     "btnConfirmItsMe": "yes, that’s me",
     "btnNotMe": "that’s not me",
     "btnSearchMyName": "search for my name",
-    "btnNoneOfThese": "none of these",
+    "btnNoneOfThese": "меня здесь нет 🥺",
     "mainMenuTitle": "Menu 🌿",
     "btnFindCollaborator": "find a collaborator",
     "btnSchedule": "schedule",
@@ -279,6 +279,7 @@
     "adminWhoHasAccessTitle": "People with admin access 🔑",
     "adminWhoHasAccessEmpty": "No one has admin access right now 🌙",
     "adminWhoHasAccessLine": "@{username}",
-    "adminWhoHasAccessNoUsername": "id:{id} (no username)"
+    "adminWhoHasAccessNoUsername": "id:{id} (no username)",
+    "regNoMatches": "I couldn’t find that name 💔\nTry another spelling — or tap the button below."
   }
 }
