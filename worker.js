@@ -214,9 +214,20 @@ function displayName(p) {
 }
 
 // ——— Fuzzy name match ———
+function normalizeName(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[“”"‘’']/g, "")
+    .replace(/[^a-z0-9\s\-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function levenshtein(a, b) {
-  a = a.toLowerCase();
-  b = b.toLowerCase();
+  a = normalizeName(a);
+  b = normalizeName(b);
   const m = a.length;
   const n = b.length;
   if (!m) return n;
@@ -234,38 +245,53 @@ function levenshtein(a, b) {
 }
 
 function scoreName(query, candidate) {
-  const q = String(query || "").trim().toLowerCase();
-  const c = String(candidate || "").trim().toLowerCase();
+  const q = normalizeName(query);
+  const c = normalizeName(candidate);
   if (!q || !c) return 999;
   if (c === q) return 0;
-  if (c.includes(q) || q.includes(c)) return 1;
+  if (c.startsWith(q) || q.startsWith(c)) return 1;
+  if (c.includes(q) || q.includes(c)) return 2;
   const dist = levenshtein(q, c);
   const ratio = dist / Math.max(q.length, c.length);
-  if (ratio <= 0.35) return 2 + dist;
-  // token overlap
-  const qt = q.split(/\s+/);
-  const ct = c.split(/\s+/);
+  if (ratio <= 0.25) return 3 + dist;
+  if (ratio <= 0.4) return 8 + dist;
+  // token overlap (first name / last name / artistic)
+  const qt = q.split(/\s+/).filter(Boolean);
+  const ct = c.split(/\s+/).filter(Boolean);
   let best = 999;
   for (const a of qt) {
     for (const b of ct) {
       if (!a || !b) continue;
-      if (a === b) best = Math.min(best, 3);
-      else if (a.includes(b) || b.includes(a)) best = Math.min(best, 4);
+      if (a === b) best = Math.min(best, 4);
+      else if (a.startsWith(b) || b.startsWith(a)) best = Math.min(best, 5);
+      else if (a.includes(b) || b.includes(a)) best = Math.min(best, 6);
       else {
         const d = levenshtein(a, b);
-        if (d <= 2 && Math.min(a.length, b.length) >= 4) best = Math.min(best, 5 + d);
+        const r = d / Math.max(a.length, b.length);
+        if (r <= 0.34 && Math.min(a.length, b.length) >= 3) best = Math.min(best, 7 + d);
       }
     }
   }
+  // weak full-string fallback so everyone still gets a rank
+  if (best === 999) best = 50 + Math.min(dist, 40);
   return best;
 }
 
-function rankParticipants(people, query, limit = 5) {
-  const scored = [];
-  for (const p of people) {
-    const s = Math.min(scoreName(query, p.name), scoreName(query, p.artistic_name));
-    if (s < 20) scored.push({ p, s });
-  }
+function bestScoreForPerson(query, p) {
+  const variants = [
+    p.name,
+    p.artistic_name,
+    [p.artistic_name, p.name].filter(Boolean).join(" "),
+    [p.name, p.artistic_name].filter(Boolean).join(" "),
+  ];
+  let best = 999;
+  for (const v of variants) best = Math.min(best, scoreName(query, v));
+  return best;
+}
+
+/** Always returns the top `limit` closest names from the participant base. */
+function rankParticipants(people, query, limit = 8) {
+  const scored = (people || []).map((p) => ({ p, s: bestScoreForPerson(query, p) }));
   scored.sort((a, b) => a.s - b.s || displayName(a.p).localeCompare(displayName(b.p)));
   return scored.slice(0, limit).map((x) => x.p);
 }
