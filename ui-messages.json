@@ -60,7 +60,7 @@
     "btnNoneOfThese": "I'm not listed here 🥺",
     "btnSchedule": "schedule",
     "btnSearchByName": "Search by name",
-    "btnShare": "I want to share ✨",
+    "btnShare": "archive ✨",
     "circleAdminCaption": "🎥 Circle from {name}",
     "circleReceivedOk": "Got it ✨\nYour circle has arrived safely.",
     "circleReminder": "A gentle reminder 🌿\nYour Notations circle is still waiting for you.",
@@ -122,7 +122,7 @@
     "shareAdminType": "Type: {type}",
     "shareAdminUserId": "User ID: {id}",
     "shareAdminWhen": "When: {when} ({tz})",
-    "sharePrompt": "Share anything that feels important right now 🌿\nYou can send us a thought, a photo, a voice message, a video, or a Telegram video circle.",
+    "sharePrompt": "Share anything that feels important right now 🌿\nYou can send us a thought, a photo, a voice message, a video, or a Telegram video circle.\n\nWe will archive it",
     "shareThanks": "Thank you for sharing ✨\nYour message has reached the Notations team.",
     "unknownCmd": "Hmm, I don’t know this command 👀\nTry /start",
     "welcome": "Welcome to Notations '26 ✨\nHere is your lab & festival companion: schedule, info, important notifications, and more! 🌿"
