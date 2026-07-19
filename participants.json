@@ -1,4 +1,5 @@
 {
+  "_note": "Participant directory fallback used when D1 is empty. Edit and deploy.",
   "participants": [
     {
       "id": 1,
