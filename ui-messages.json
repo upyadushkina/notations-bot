@@ -122,7 +122,7 @@
     "shareAdminType": "Type: {type}",
     "shareAdminUserId": "User ID: {id}",
     "shareAdminWhen": "When: {when} ({tz})",
-    "sharePrompt": "Share anything that feels important right now 🌿\nYou can send us a thought, a photo, a voice message, a video, or a Telegram video circle.\n\nWe will archive it",
+    "sharePrompt": "Share anything that feels important right now 🌿\n\nIt can be a thought, a photo, a voice message, a video, or a Telegram video circle.\n\nWe’ll carefully keep it in the Notations archive — because these small moments matter, and we don’t want them to get lost ✨",
     "shareThanks": "Thank you for sharing ✨\nYour message has reached the Notations team.",
     "unknownCmd": "Hmm, I don’t know this command 👀\nTry /start",
     "welcome": "Welcome to Notations '26 ✨\nHere is your lab & festival companion: schedule, info, important notifications, and more! 🌿"
