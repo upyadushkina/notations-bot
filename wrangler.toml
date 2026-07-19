@@ -8,7 +8,12 @@ binding = "DB"
 database_name = "notations-bot"
 database_id = "ebd433dc-855a-4b5b-b3a8-ebb2fdbf9464"
 
-# Secrets (set in Cloudflare dashboard):
-# - TELEGRAM_BOT_TOKEN
-# - TELEGRAM_WEBHOOK_SECRET (optional)
+[assets]
+directory = "./assets"
+binding = "ASSETS"
+
+# Secrets / vars (Cloudflare dashboard):
+# - TELEGRAM_BOT_TOKEN (secret)
+# - TELEGRAM_WEBHOOK_SECRET (optional secret)
 # - ADMIN_PASSWORD (optional; default in code: bigbrother)
+# - MAP_EXPLAINER_URL (optional HTTPS URL to mapping image if ASSETS unavailable)
