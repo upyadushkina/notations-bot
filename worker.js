@@ -1,15 +1,13 @@
 import MESSAGES from "./ui-messages.json";
 import participantsData from "./participants.json";
-import eventsData from "./events.json";
 import mappingExplainerPng from "./mapping-explainer.png";
 
 const PARTICIPANTS = participantsData.participants || participantsData;
-const EVENTS = eventsData.events || eventsData;
-const BUILD = "ux-v6";
+const BUILD = "ux-v7";
+const SCHEDULE_KEY = "schedule_message";
 
 const TG = "https://api.telegram.org";
 const TZ = "Asia/Yerevan";
-const OFFSET = "+04:00";
 const DEFAULT_ADMIN_PASSWORD = "bigbrother";
 
 function adminPassword(env) {
@@ -124,76 +122,6 @@ function safeJson(raw, fallback) {
   } catch {
     return fallback;
   }
-}
-
-function normalizeTime(timeStr) {
-  if (!timeStr) return "00:00:00";
-  const s = String(timeStr).trim();
-  const m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-  if (!m) return "00:00:00";
-  return `${m[1].padStart(2, "0")}:${m[2]}:${(m[3] || "00").padStart(2, "0")}`;
-}
-
-function eventInstantMs(dateStr, timeStr) {
-  const t0 = normalizeTime(timeStr);
-  const d = String(dateStr || "").trim();
-  if (!d || !t0) return NaN;
-  return new Date(`${d}T${t0}${OFFSET}`).getTime();
-}
-
-function effectiveEndMs(dateStr, startTimeStr, endStr) {
-  const startMs = eventInstantMs(dateStr, startTimeStr);
-  if (Number.isNaN(startMs)) return NaN;
-  if (!endStr || !String(endStr).trim()) return startMs + 45 * 60 * 1000;
-  const endMs = eventInstantMs(dateStr, endStr);
-  if (Number.isNaN(endMs) || endMs <= startMs) return startMs + 45 * 60 * 1000;
-  return endMs;
-}
-
-function ymdInTz(ms = Date.now()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(ms));
-}
-
-function addDaysYmd(ymd, days) {
-  const [y, m, d] = ymd.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + days));
-  return dt.toISOString().slice(0, 10);
-}
-
-function formatClock(ms) {
-  try {
-    return new Intl.DateTimeFormat("en-GB", {
-      timeZone: TZ,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(new Date(ms));
-  } catch {
-    return new Date(ms).toISOString().slice(11, 16);
-  }
-}
-
-function formatDateShort(ymd) {
-  const ms = eventInstantMs(ymd, "12:00");
-  try {
-    return new Intl.DateTimeFormat("en-GB", {
-      timeZone: TZ,
-      weekday: "short",
-      day: "numeric",
-      month: "short",
-    }).format(new Date(ms));
-  } catch {
-    return ymd;
-  }
-}
-
-function clockFromSql(t0) {
-  return normalizeTime(t0).slice(0, 5);
 }
 
 function rowNav() {
@@ -527,213 +455,47 @@ async function renderMainMenu(admin) {
   };
 }
 
-async function renderScheduleMenu() {
-  return {
-    text: `<b>${escapeHtml(t("btnSchedule"))}</b>`,
-    keyboard: [
-      [{ text: t("btnToday"), callback_data: "s:td" }, { text: t("btnTomorrow"), callback_data: "s:tm" }],
-      [{ text: t("btnFullSchedule"), callback_data: "s:full" }],
-      [{ text: t("btnNow"), callback_data: "s:now" }, { text: t("btnNext"), callback_data: "s:next" }],
-      [{ text: t("btnMine"), callback_data: "s:mine" }],
-      [{ text: t("btnVenues"), callback_data: "s:venues" }],
-      ...rowNav(),
-    ],
-  };
+async function ensureBotSettings(db) {
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS bot_settings (
+         key TEXT PRIMARY KEY,
+         value TEXT NOT NULL,
+         updated_at TEXT DEFAULT (datetime('now'))
+       )`
+    )
+    .run();
 }
 
-function eventButtonLabel(ev) {
-  const time = clockFromSql(ev.start_time);
-  const title = String(ev.title || "").slice(0, 40);
-  return `${time} · ${title}`.slice(0, 64);
-}
-
-async function listEventsByDate(db, ymd) {
+async function getScheduleMessage(db) {
   try {
-    const { results } = await db
-      .prepare(
-        `SELECT * FROM events WHERE status = 'active' AND date = ? ORDER BY start_time, id`
-      )
-      .bind(ymd)
-      .all();
-    if (results && results.length) return results;
+    await ensureBotSettings(db);
+    const row = await db.prepare(`SELECT value FROM bot_settings WHERE key = ?`).bind(SCHEDULE_KEY).first();
+    const v = row?.value != null ? String(row.value).trim() : "";
+    return v || t("scheduleEmpty");
   } catch (e) {
-    console.error("listEventsByDate", e);
+    console.error("getScheduleMessage", e);
+    return t("scheduleEmpty");
   }
-  return (EVENTS || [])
-    .filter((e) => e.status === "active" && e.date === ymd)
-    .sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)) || a.id - b.id);
 }
 
-async function listAllActiveEvents(db) {
-  try {
-    const { results } = await db
-      .prepare(`SELECT * FROM events WHERE status = 'active' ORDER BY date, start_time, id`)
-      .all();
-    if (results && results.length) return results;
-  } catch (e) {
-    console.error("listAllActiveEvents", e);
-  }
-  return (EVENTS || [])
-    .filter((e) => e.status === "active")
-    .sort(
-      (a, b) =>
-        String(a.date).localeCompare(String(b.date)) ||
-        String(a.start_time).localeCompare(String(b.start_time)) ||
-        a.id - b.id
-    );
+async function setScheduleMessage(db, text) {
+  await ensureBotSettings(db);
+  await db
+    .prepare(
+      `INSERT INTO bot_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    )
+    .bind(SCHEDULE_KEY, String(text || "").trim())
+    .run();
 }
 
-async function getEventById(db, id) {
-  try {
-    const row = await db.prepare("SELECT * FROM events WHERE id = ?").bind(id).first();
-    if (row) return row;
-  } catch {}
-  return (EVENTS || []).find((e) => Number(e.id) === Number(id)) || null;
-}
-
-function listVenues() {
-  const set = new Set();
-  for (const e of EVENTS || []) {
-    if (e.location) set.add(String(e.location).trim());
-  }
-  return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
-}
-
-async function renderVenues() {
-  const venues = listVenues();
-  if (!venues.length) {
-    return { text: `<b>${escapeHtml(t("venuesTitle"))}</b>
-
-${escapeHtml(t("noEvents"))}`, keyboard: rowNav() };
-  }
-  const body = venues.map((v, i) => `${i + 1}. ${v}`).join("\n");
+async function renderScheduleScreen(db) {
+  const body = await getScheduleMessage(db);
   return {
-    text: `<b>${escapeHtml(t("venuesTitle"))}</b>
-
-${escapeHtml(body)}`,
+    text: escapeHtml(body),
     keyboard: rowNav(),
   };
-}
-
-async function regCount(db, eventId) {
-  const row = await db
-    .prepare(`SELECT COUNT(*) AS n FROM registrations WHERE event_id = ? AND status = 'registered'`)
-    .bind(eventId)
-    .first();
-  return Number(row?.n || 0);
-}
-
-async function userRegStatus(db, userId, eventId) {
-  const row = await db
-    .prepare(`SELECT status FROM registrations WHERE user_id = ? AND event_id = ?`)
-    .bind(userId, eventId)
-    .first();
-  return row?.status || null;
-}
-
-async function renderEventList(db, title, events) {
-  if (!events.length) {
-    return { text: `<b>${escapeHtml(title)}</b>\n\n${escapeHtml(t("noEvents"))}`, keyboard: rowNav() };
-  }
-  const kb = [];
-  let lastDate = null;
-  for (const ev of events.slice(0, 40)) {
-    if (ev.date !== lastDate && events.length > 15) {
-      // group label as disabled-looking button (callback noop)
-      kb.push([{ text: `— ${formatDateShort(ev.date)} —`, callback_data: "noop" }]);
-      lastDate = ev.date;
-    }
-    kb.push([{ text: eventButtonLabel(ev), callback_data: `e:${ev.id}` }]);
-  }
-  kb.push(...rowNav());
-  return { text: `<b>${escapeHtml(title)}</b>`, keyboard: kb };
-}
-
-async function renderEventCard(db, user, ev, isAdminUser) {
-  if (!ev || ev.status === "cancelled") {
-    return { text: escapeHtml(t("noEvents")), keyboard: rowNav() };
-  }
-  const start = clockFromSql(ev.start_time);
-  const end = clockFromSql(ev.end_time);
-  const lines = [
-    `<b>${escapeHtml(ev.title)}</b>`,
-    escapeHtml(formatDateShort(ev.date)),
-    escapeHtml(t("timeRange", { start, end })),
-  ];
-  if (ev.location) lines.push(escapeHtml(t("location", { loc: ev.location })));
-  if (ev.category) lines.push(escapeHtml(t("tag", { cat: ev.category })));
-  if (ev.speakers) lines.push(escapeHtml(t("performers", { txt: ev.speakers })));
-  lines.push("");
-  lines.push(escapeHtml(ev.description || t("noDescription")));
-
-  if (isAdminUser) {
-    const n = await regCount(db, ev.id);
-    lines.push("");
-    lines.push(`<i>${escapeHtml(t("adminEventRegCount", { n }))}</i>`);
-  }
-
-  const status = await userRegStatus(db, user.id, ev.id);
-  const kb = [];
-  if (status === "registered") {
-    lines.push("");
-    lines.push(escapeHtml(t("registered")));
-    kb.push([{ text: t("btnCancelReg"), callback_data: `x:${ev.id}` }]);
-  } else {
-    kb.push([{ text: t("btnRegister"), callback_data: `r:${ev.id}` }]);
-  }
-  kb.push(...rowNav());
-  return { text: lines.join("\n"), keyboard: kb };
-}
-
-async function renderMySchedule(db, user) {
-  const { results } = await db
-    .prepare(
-      `SELECT e.* FROM registrations r
-       JOIN events e ON e.id = r.event_id
-       WHERE r.user_id = ? AND r.status = 'registered' AND e.status = 'active'
-       ORDER BY e.date, e.start_time`
-    )
-    .bind(user.id)
-    .all();
-  const events = results || [];
-  if (!events.length) {
-    return { text: `<b>${escapeHtml(t("myScheduleTitle"))}</b>\n\n${escapeHtml(t("myScheduleEmpty"))}`, keyboard: rowNav() };
-  }
-  return renderEventList(db, t("myScheduleTitle"), events);
-}
-
-async function renderNowNext(db, mode) {
-  const now = Date.now();
-  const events = await listAllActiveEvents(db);
-  if (mode === "now") {
-    const live = events.filter((ev) => {
-      const a = eventInstantMs(ev.date, ev.start_time);
-      const b = effectiveEndMs(ev.date, ev.start_time, ev.end_time);
-      return a <= now && now < b;
-    });
-    if (!live.length) {
-      return { text: `<b>${escapeHtml(t("nowTitle"))}</b>\n\n${escapeHtml(t("nowEmpty"))}`, keyboard: rowNav() };
-    }
-    return renderEventList(db, t("nowTitle"), live);
-  }
-  const upcoming = events
-    .filter((ev) => eventInstantMs(ev.date, ev.start_time) > now)
-    .slice(0, 3);
-  if (!upcoming.length) {
-    return { text: `<b>${escapeHtml(t("nextTitle"))}</b>\n\n${escapeHtml(t("nextEmpty"))}`, keyboard: rowNav() };
-  }
-  return renderEventList(db, t("nextTitle"), upcoming);
-}
-
-async function renderFullScheduleDays(db) {
-  const events = await listAllActiveEvents(db);
-  const days = [...new Set(events.map((e) => e.date))];
-  if (!days.length) {
-    return { text: escapeHtml(t("noEvents")), keyboard: rowNav() };
-  }
-  const kb = days.map((d) => [{ text: formatDateShort(d), callback_data: `s:d:${d}` }]);
-  kb.push(...rowNav());
-  return { text: `<b>${escapeHtml(t("btnFullSchedule"))}</b>\n\n${escapeHtml(t("pickDay"))}`, keyboard: kb };
 }
 
 // ——— Collaborator ———
@@ -844,7 +606,7 @@ function renderAdminMenu() {
       [{ text: t("btnAdminParticipants"), callback_data: "a:p" }],
       [{ text: t("btnAdminCircles"), callback_data: "a:c" }],
       [{ text: t("btnAdminNotifications"), callback_data: "a:n" }],
-      [{ text: t("btnAdminSchedule"), callback_data: "a:s" }],
+      [{ text: t("btnAdminSetSchedule"), callback_data: "a:s" }],
       [{ text: t("btnAdminList"), callback_data: "a:admins" }],
       ...rowNav(),
     ],
@@ -1024,7 +786,7 @@ async function runBroadcast(token, db, broadcastId) {
 async function renderByKey(db, user, key, env, from) {
   const admin = await isAdmin(db, from, env);
   if (key === "M") return renderMainMenu(admin);
-  if (key === "S") return renderScheduleMenu();
+  if (key === "S") return renderScheduleScreen(db);
   if (key === "A") return renderAdminMenu();
   if (key === "C") {
     const data = safeJson(user.state_data, {});
@@ -1190,83 +952,11 @@ async function handleCallback(token, db, env, cq) {
     return;
   }
 
-  // Schedule
+  // Schedule — single admin-set message
   if (data === "s") {
     await answerCallbackQuery(token, cq.id);
     await navPush(db, user.id, "S");
-    await replyOrEdit(token, chatId, messageId, await renderScheduleMenu());
-    return;
-  }
-  if (data === "s:td" || data === "s:tm") {
-    await answerCallbackQuery(token, cq.id);
-    const ymd = data === "s:td" ? ymdInTz() : addDaysYmd(ymdInTz(), 1);
-    const events = await listEventsByDate(db, ymd);
-    const title = data === "s:td" ? t("btnToday") : t("btnTomorrow");
-    await replyOrEdit(token, chatId, messageId, await renderEventList(db, `${title} · ${formatDateShort(ymd)}`, events));
-    return;
-  }
-  if (data === "s:full") {
-    await answerCallbackQuery(token, cq.id);
-    await replyOrEdit(token, chatId, messageId, await renderFullScheduleDays(db));
-    return;
-  }
-  if (data.startsWith("s:d:")) {
-    await answerCallbackQuery(token, cq.id);
-    const ymd = data.slice(4);
-    const events = await listEventsByDate(db, ymd);
-    await replyOrEdit(token, chatId, messageId, await renderEventList(db, formatDateShort(ymd), events));
-    return;
-  }
-  if (data === "s:now" || data === "s:next") {
-    await answerCallbackQuery(token, cq.id);
-    await replyOrEdit(token, chatId, messageId, await renderNowNext(db, data === "s:now" ? "now" : "next"));
-    return;
-  }
-  if (data === "s:mine") {
-    await answerCallbackQuery(token, cq.id);
-    await replyOrEdit(token, chatId, messageId, await renderMySchedule(db, user));
-    return;
-  }
-  if (data === "s:venues") {
-    await answerCallbackQuery(token, cq.id);
-    await replyOrEdit(token, chatId, messageId, await renderVenues());
-    return;
-  }
-
-  if (data.startsWith("e:")) {
-    await answerCallbackQuery(token, cq.id);
-    const id = Number(data.slice(2));
-    const ev = await getEventById(db, id);
-    await replyOrEdit(token, chatId, messageId, await renderEventCard(db, user, ev, admin));
-    return;
-  }
-
-  if (data.startsWith("r:")) {
-    const id = Number(data.slice(2));
-    await db
-      .prepare(
-        `INSERT INTO registrations (user_id, event_id, status) VALUES (?, ?, 'registered')
-         ON CONFLICT(user_id, event_id) DO UPDATE SET status = 'registered', updated_at = datetime('now')`
-      )
-      .bind(user.id, id)
-      .run();
-    await answerCallbackQuery(token, cq.id, t("registerOk"));
-    const ev = await getEventById(db, id);
-    await replyOrEdit(token, chatId, messageId, await renderEventCard(db, user, ev, admin));
-    return;
-  }
-
-  if (data.startsWith("x:")) {
-    const id = Number(data.slice(2));
-    await db
-      .prepare(
-        `UPDATE registrations SET status = 'cancelled', updated_at = datetime('now') WHERE user_id = ? AND event_id = ?`
-      )
-      .bind(user.id, id)
-      .run();
-    await answerCallbackQuery(token, cq.id, t("cancelOk"));
-    const ev = await getEventById(db, id);
-    await replyOrEdit(token, chatId, messageId, await renderEventCard(db, user, ev, admin));
+    await replyOrEdit(token, chatId, messageId, await renderScheduleScreen(db));
     return;
   }
 
@@ -1673,82 +1363,13 @@ async function handleCallback(token, db, env, cq) {
     return;
   }
 
-  // Admin schedule
+  // Admin set schedule
   if (data === "a:s") {
     await answerCallbackQuery(token, cq.id);
+    await setUserState(db, user.id, "admin_set_schedule", {});
     await replyOrEdit(token, chatId, messageId, {
-      text: `<b>${escapeHtml(t("adminScheduleTitle"))}</b>`,
-      keyboard: [
-        [{ text: t("btnSchedCreate"), callback_data: "a:s:new" }],
-        [{ text: t("btnSchedEdit"), callback_data: "a:s:edit" }],
-        [{ text: t("btnSchedCancelEvent"), callback_data: "a:s:cancel" }],
-        ...rowNav(),
-      ],
-    });
-    return;
-  }
-  if (data === "a:s:new") {
-    await answerCallbackQuery(token, cq.id);
-    await setUserState(db, user.id, "admin_sched_new", { step: "title", draft: {} });
-    await replyOrEdit(token, chatId, messageId, {
-      text: t("adminSchedAskTitle"),
-      keyboard: [[{ text: t("btnCancel"), callback_data: "a:s" }], ...rowNav()],
-    });
-    return;
-  }
-  if (data === "a:s:edit" || data === "a:s:cancel") {
-    await answerCallbackQuery(token, cq.id);
-    const mode = data.endsWith("edit") ? "edit" : "cancel";
-    const events = (await listAllActiveEvents(db)).slice(0, 30);
-    const kb = events.map((ev) => [
-      {
-        text: `${ev.date} ${clockFromSql(ev.start_time)} ${ev.title}`.slice(0, 64),
-        callback_data: mode === "edit" ? `a:s:e:${ev.id}` : `a:s:x:${ev.id}`,
-      },
-    ]);
-    kb.push(...rowNav());
-    await replyOrEdit(token, chatId, messageId, {
-      text: mode === "edit" ? t("adminSchedPickEdit") : t("adminSchedPickCancel"),
-      keyboard: kb,
-    });
-    return;
-  }
-  if (data.startsWith("a:s:x:")) {
-    const id = Number(data.split(":")[3]);
-    await db
-      .prepare(`UPDATE events SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`)
-      .bind(id)
-      .run();
-    await answerCallbackQuery(token, cq.id, t("adminSchedCancelled"));
-    // notify registered users
-    const { results } = await db
-      .prepare(
-        `SELECT u.telegram_id, e.title FROM registrations r
-         JOIN users u ON u.id = r.user_id
-         JOIN events e ON e.id = r.event_id
-         WHERE r.event_id = ? AND r.status = 'registered'`
-      )
-      .bind(id)
-      .all();
-    for (const r of results || []) {
-      try {
-        await sendMessage(
-          token,
-          r.telegram_id,
-          `${escapeHtml(t("eventCancelledNotify"))}\n\n<b>${escapeHtml(r.title)}</b>`
-        );
-      } catch {}
-    }
-    await replyOrEdit(token, chatId, messageId, renderAdminMenu());
-    return;
-  }
-  if (data.startsWith("a:s:e:")) {
-    const id = Number(data.split(":")[3]);
-    await answerCallbackQuery(token, cq.id);
-    await setUserState(db, user.id, "admin_sched_edit", { eventId: id, step: "field" });
-    await replyOrEdit(token, chatId, messageId, {
-      text: t("adminSchedEditHelp"),
-      keyboard: [[{ text: t("btnCancel"), callback_data: "a:s" }], ...rowNav()],
+      text: escapeHtml(t("adminSetSchedulePrompt")),
+      keyboard: [[{ text: t("btnCancel"), callback_data: "a" }], ...rowNav()],
     });
     return;
   }
@@ -1955,112 +1576,10 @@ async function handleMessage(token, db, env, msg) {
     return;
   }
 
-  if (user.state === "admin_sched_new" && admin && text) {
-    const st = safeJson(user.state_data, { step: "title", draft: {} });
-    const draft = st.draft || {};
-    if (st.step === "title") {
-      draft.title = text.trim();
-      await setUserState(db, user.id, "admin_sched_new", { step: "date", draft });
-      await sendMessage(token, chatId, t("adminSchedAskDate"));
-      return;
-    }
-    if (st.step === "date") {
-      draft.date = parseDateInput(text);
-      await setUserState(db, user.id, "admin_sched_new", { step: "time", draft });
-      await sendMessage(token, chatId, t("adminSchedAskTime"));
-      return;
-    }
-    if (st.step === "time") {
-      const m = String(text).match(/(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})/);
-      if (!m) {
-        await sendMessage(token, chatId, t("adminSchedTimeFormat"));
-        return;
-      }
-      draft.start_time = normalizeTime(m[1]);
-      draft.end_time = normalizeTime(m[2]);
-      await setUserState(db, user.id, "admin_sched_new", { step: "place", draft });
-      await sendMessage(token, chatId, t("adminSchedAskPlace"));
-      return;
-    }
-    if (st.step === "place") {
-      draft.location = text.trim();
-      await setUserState(db, user.id, "admin_sched_new", { step: "desc", draft });
-      await sendMessage(token, chatId, t("adminSchedAskDesc"));
-      return;
-    }
-    if (st.step === "desc") {
-      draft.description = text.trim() === "—" ? "" : text.trim();
-      await db
-        .prepare(
-          `INSERT INTO events (title, description, date, start_time, end_time, category, location, speakers, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'active')`
-        )
-        .bind(
-          draft.title,
-          draft.description || null,
-          draft.date,
-          draft.start_time,
-          draft.end_time,
-          "Custom",
-          draft.location,
-        )
-        .run();
-      await clearUserState(db, user.id);
-      await sendMessage(token, chatId, escapeHtml(t("adminSchedSaved")));
-      return;
-    }
-  }
-
-  if (user.state === "admin_sched_edit" && admin && text) {
-    const st = safeJson(user.state_data, {});
-    const id = st.eventId;
-    const parts = text.split("|").map((x) => x.trim());
-    const field = (parts[0] || "").toLowerCase();
-    const ev = await getEventById(db, id);
-    if (!ev) {
-      await clearUserState(db, user.id);
-      return;
-    }
-    if (field === "title" && parts[1]) {
-      await db.prepare(`UPDATE events SET title = ?, updated_at = datetime('now') WHERE id = ?`).bind(parts[1], id).run();
-    } else if (field === "place" && parts[1]) {
-      await db.prepare(`UPDATE events SET location = ?, updated_at = datetime('now') WHERE id = ?`).bind(parts[1], id).run();
-    } else if (field === "date" && parts[1]) {
-      await db.prepare(`UPDATE events SET date = ?, updated_at = datetime('now') WHERE id = ?`).bind(parseDateInput(parts[1]), id).run();
-    } else if (field === "time" && parts[1] && parts[2]) {
-      await db
-        .prepare(`UPDATE events SET start_time = ?, end_time = ?, updated_at = datetime('now') WHERE id = ?`)
-        .bind(normalizeTime(parts[1]), normalizeTime(parts[2]), id)
-        .run();
-    } else if (field === "desc") {
-      await db
-        .prepare(`UPDATE events SET description = ?, updated_at = datetime('now') WHERE id = ?`)
-        .bind(parts.slice(1).join("|"), id)
-        .run();
-    } else {
-      await sendMessage(token, chatId, escapeHtml(t("adminSchedUnknownFormat")));
-      return;
-    }
+  if (user.state === "admin_set_schedule" && admin && text) {
+    await setScheduleMessage(db, text);
     await clearUserState(db, user.id);
-    await sendMessage(token, chatId, escapeHtml(t("adminSchedSaved")));
-    // notify registered
-    const { results } = await db
-      .prepare(
-        `SELECT u.telegram_id FROM registrations r JOIN users u ON u.id = r.user_id
-         WHERE r.event_id = ? AND r.status = 'registered'`
-      )
-      .bind(id)
-      .all();
-    const updated = await db.prepare("SELECT * FROM events WHERE id = ?").bind(id).first();
-    for (const r of results || []) {
-      try {
-        await sendMessage(
-          token,
-          r.telegram_id,
-          `${escapeHtml(t("scheduleChangedNotify"))}\n\n<b>${escapeHtml(updated.title)}</b>\n${escapeHtml(updated.date)} ${clockFromSql(updated.start_time)} · ${escapeHtml(updated.location || "")}`
-        );
-      } catch {}
-    }
+    await sendMessage(token, chatId, escapeHtml(t("adminSchedSaved")), renderAdminMenu().keyboard);
     return;
   }
 
@@ -2070,11 +1589,6 @@ async function handleMessage(token, db, env, msg) {
   }
 }
 
-function parseDateInput(s) {
-  const m = String(s).trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-  return String(s).trim();
-}
 
 async function launchCircleCampaign(token, db, env, user, chatId, prompt, audienceType, audienceData) {
   const ins = await db
@@ -2132,9 +1646,8 @@ export default {
         });
       }
       if (url.pathname === "/" || url.pathname === "/health") {
-        const evCount = typeof EVENTS !== "undefined" ? EVENTS.length : 0;
         return new Response(
-          `Notations bot ok · ${BUILD} · participants=${PARTICIPANTS.length} · events=${evCount}`
+          `Notations bot ok · ${BUILD} · participants=${PARTICIPANTS.length}`
         );
       }
     }
