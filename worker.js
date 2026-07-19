@@ -574,8 +574,7 @@ async function renderVenues() {
 
 ${escapeHtml(t("noEvents"))}`, keyboard: rowNav() };
   }
-  const body = venues.map((v, i) => `${i + 1}. ${v}`).join("
-");
+  const body = venues.map((v, i) => `${i + 1}. ${v}`).join("\n");
   return {
     text: `<b>${escapeHtml(t("venuesTitle"))}</b>
 
@@ -2066,8 +2065,11 @@ async function launchCircleCampaign(token, db, env, user, chatId, prompt, audien
   }
   const sent = await sendCircleRequests(token, db, env, campaignId, userIds, prompt);
   await clearUserState(db, user.id);
-  await sendMessage(token, chatId, escapeHtml(t("adminCircleSent")) + "
-" + escapeHtml(t("adminCircleSentCount", { sent, total: userIds.length })));
+  await sendMessage(
+    token,
+    chatId,
+    escapeHtml(t("adminCircleSent")) + "\n" + escapeHtml(t("adminCircleSentCount", { sent, total: userIds.length }))
+  );
 }
 
 // Extra callback bits for circle tags — patch into handleCallback via dual dispatch
