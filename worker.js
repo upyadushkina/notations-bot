@@ -1,6 +1,7 @@
 import MESSAGES from "./ui-messages.json";
 import participantsData from "./participants.json";
 import eventsData from "./events.json";
+import mappingExplainerPng from "./mapping-explainer.png";
 
 const PARTICIPANTS = participantsData.participants || participantsData;
 const EVENTS = eventsData.events || eventsData;
@@ -1010,21 +1011,17 @@ async function sendMappingExplainer(token, env, chatId) {
   const caption = t("collabMappingCaption");
   const kb = [[{ text: t("btnMappingTool"), url: t("mappingToolUrl") }], ...rowNav()];
   try {
-    if (env.ASSETS) {
-      const assetRes = await env.ASSETS.fetch(new Request("https://assets.local/mapping-explainer.png"));
-      if (assetRes.ok) {
-        const buf = await assetRes.arrayBuffer();
-        const form = new FormData();
-        form.append("chat_id", String(chatId));
-        form.append("photo", new Blob([buf], { type: "image/png" }), "mapping-explainer.png");
-        form.append("caption", caption);
-        form.append("parse_mode", "HTML");
-        form.append("reply_markup", JSON.stringify({ inline_keyboard: kb }));
-        const res = await fetch(`${TG}/bot${token}/sendPhoto`, { method: "POST", body: form });
-        const json = await res.json().catch(() => ({}));
-        if (json.ok) return;
-        console.error("sendPhoto multipart", json);
-      }
+    if (mappingExplainerPng) {
+      const form = new FormData();
+      form.append("chat_id", String(chatId));
+      form.append("photo", new Blob([mappingExplainerPng], { type: "image/png" }), "mapping-explainer.png");
+      form.append("caption", caption);
+      form.append("parse_mode", "HTML");
+      form.append("reply_markup", JSON.stringify({ inline_keyboard: kb }));
+      const res = await fetch(`${TG}/bot${token}/sendPhoto`, { method: "POST", body: form });
+      const json = await res.json().catch(() => ({}));
+      if (json.ok) return;
+      console.error("sendPhoto multipart", json);
     }
     if (env.MAP_EXPLAINER_URL) {
       await tgCall(token, "sendPhoto", {
@@ -2145,8 +2142,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET") {
-      if (url.pathname === "/mapping-explainer.png" && env.ASSETS) {
-        return env.ASSETS.fetch(request);
+      if (url.pathname === "/mapping-explainer.png" && mappingExplainerPng) {
+        return new Response(mappingExplainerPng, {
+          headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600" },
+        });
       }
       if (url.pathname === "/" || url.pathname === "/health") {
         const evCount = typeof EVENTS !== "undefined" ? EVENTS.length : 0;
