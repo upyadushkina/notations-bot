@@ -363,6 +363,38 @@ async function listAdminTelegramIds(db, env) {
   return [...new Set((results || []).map((r) => Number(r.telegram_id)).filter(Boolean))];
 }
 
+async function listAdminUsers(db) {
+  const { results } = await db
+    .prepare(
+      `SELECT u.telegram_id, u.username, p.name, p.artistic_name
+       FROM users u
+       LEFT JOIN participants p ON p.id = u.participant_id
+       WHERE u.is_admin = 1
+       ORDER BY COALESCE(p.name, u.username, CAST(u.telegram_id AS TEXT)) COLLATE NOCASE`
+    )
+    .all();
+  return results || [];
+}
+
+function formatPeopleLines(rows) {
+  return (rows || [])
+    .map((u) => {
+      const name = displayName(u) || u.username || String(u.telegram_id || u.id || "—");
+      const un = u.username ? ` @${String(u.username).replace(/^@/, "")}` : "";
+      return `• ${name}${un}`;
+    })
+    .join("\n");
+}
+
+function formatSentReport(headline, people) {
+  return [
+    escapeHtml(headline),
+    "",
+    `<b>${escapeHtml(t("adminSentToTitle"))}</b>`,
+    escapeHtml(formatPeopleLines(people) || "—"),
+  ].join("\n");
+}
+
 async function getParticipant(db, id) {
   return db.prepare("SELECT * FROM participants WHERE id = ?").bind(id).first();
 }
@@ -813,7 +845,7 @@ function renderAdminMenu() {
       [{ text: t("btnAdminCircles"), callback_data: "a:c" }],
       [{ text: t("btnAdminNotifications"), callback_data: "a:n" }],
       [{ text: t("btnAdminSchedule"), callback_data: "a:s" }],
-      [{ text: t("btnAdminLogout"), callback_data: "a:logout" }],
+      [{ text: t("btnAdminList"), callback_data: "a:admins" }],
       ...rowNav(),
     ],
   };
@@ -903,8 +935,16 @@ async function activeCircleTarget(db, userId) {
 
 async function sendCircleRequests(token, db, env, campaignId, userIds, prompt) {
   let sent = 0;
+  const delivered = [];
   for (const uid of userIds) {
-    const u = await db.prepare("SELECT * FROM users WHERE id = ?").bind(uid).first();
+    const u = await db
+      .prepare(
+        `SELECT u.*, p.name, p.artistic_name FROM users u
+         LEFT JOIN participants p ON p.id = u.participant_id
+         WHERE u.id = ?`
+      )
+      .bind(uid)
+      .first();
     if (!u) continue;
     try {
       await sendMessage(
@@ -913,9 +953,10 @@ async function sendCircleRequests(token, db, env, campaignId, userIds, prompt) {
         `<b>${escapeHtml(t("circleRequestTitle"))}</b>\n\n${escapeHtml(prompt || t("circleRequestBody"))}`
       );
       sent++;
+      delivered.push(u);
     } catch {}
   }
-  return sent;
+  return { sent, delivered };
 }
 
 async function resolveAudienceUserIds(db, audienceType, audienceJson) {
@@ -931,15 +972,6 @@ async function resolveAudienceUserIds(db, audienceType, audienceJson) {
     const n = Math.max(1, Number(data.n || 1));
     const shuffled = [...users].sort(() => Math.random() - 0.5);
     return shuffled.slice(0, n).map((u) => u.id);
-  }
-
-  if (audienceType === "tags") {
-    const filters = data.filters || {};
-    const people = await allParticipants(db);
-    const matchedIds = new Set(
-      people.filter((p) => participantMatchesFilters(p, filters)).map((p) => p.id)
-    );
-    return users.filter((u) => matchedIds.has(u.participant_id)).map((u) => u.id);
   }
 
   if (audienceType === "selected") {
@@ -969,10 +1001,12 @@ async function runBroadcast(token, db, broadcastId) {
   await db.prepare(`UPDATE broadcasts SET status = 'sending' WHERE id = ?`).bind(broadcastId).run();
   const recipients = await registeredRecipients(db);
   let ok = 0;
+  const delivered = [];
   for (const u of recipients) {
     try {
       await sendMessage(token, u.telegram_id, escapeHtml(b.body_text));
       ok++;
+      delivered.push(u);
     } catch {}
     // light pacing
     if (ok % 25 === 0) await new Promise((r) => setTimeout(r, 300));
@@ -983,7 +1017,7 @@ async function runBroadcast(token, db, broadcastId) {
     )
     .bind(ok, broadcastId)
     .run();
-  return { ok, total: recipients.length };
+  return { ok, total: recipients.length, delivered };
 }
 
 // ——— Screen router for back stack ———
@@ -1522,7 +1556,10 @@ async function handleCallback(token, db, env, cq) {
       await sendMessage(
         token,
         chatId,
-        escapeHtml(t("adminBroadcastSentOk")) + "\n" + escapeHtml(t("adminBroadcastSentCount", { ok: result?.ok || 0, total: result?.total || 0 }))
+        formatSentReport(
+          `${t("adminBroadcastSentOk")}\n${t("adminBroadcastSentCount", { ok: result?.ok || 0, total: result?.total || 0 })}`,
+          result?.delivered || []
+        )
       );
     }
     await clearUserState(db, user.id);
@@ -1543,7 +1580,6 @@ async function handleCallback(token, db, env, cq) {
       text: `<b>${escapeHtml(t("adminCircleTitle"))}</b>`,
       keyboard: [
         [{ text: t("btnCircleSendAll"), callback_data: "a:c:all" }],
-        [{ text: t("btnCircleSendByTags"), callback_data: "a:c:tags" }],
         [{ text: t("btnCircleSendRandom"), callback_data: "a:c:rand" }],
         [{ text: t("btnCircleViewInbox"), callback_data: "a:c:inbox" }],
         [{ text: t("btnCircleWhoMissing"), callback_data: "a:c:miss" }],
@@ -1553,7 +1589,7 @@ async function handleCallback(token, db, env, cq) {
     });
     return;
   }
-  if (data === "a:c:all" || data === "a:c:tags" || data === "a:c:rand") {
+  if (data === "a:c:all" || data === "a:c:rand") {
     await answerCallbackQuery(token, cq.id);
     const mode = data.split(":")[2];
     await setUserState(db, user.id, "admin_circle_prompt", { mode });
@@ -1621,6 +1657,7 @@ async function handleCallback(token, db, env, cq) {
       return;
     }
     let n = 0;
+    const reminded = [];
     for (const u of missing) {
       try {
         await sendMessage(token, u.telegram_id, escapeHtml(t("circleReminder")));
@@ -1629,9 +1666,10 @@ async function handleCallback(token, db, env, cq) {
           .bind(camp.id, u.id)
           .run();
         n++;
+        reminded.push(u);
       } catch {}
     }
-    await sendMessage(token, chatId, escapeHtml(t("adminRemindersSent", { n })));
+    await sendMessage(token, chatId, formatSentReport(t("adminRemindersSent", { n }), reminded));
     return;
   }
 
@@ -1715,12 +1753,16 @@ async function handleCallback(token, db, env, cq) {
     return;
   }
 
-  if (data === "a:logout") {
-    await setAdminFlag(db, user.id, false);
-    await answerCallbackQuery(token, cq.id, t("adminLogoutOk"));
-    await clearUserState(db, user.id);
-    await navResetMenu(db, user.id);
-    await replyOrEdit(token, chatId, messageId, await renderMainMenu(false));
+  if (data === "a:admins") {
+    await answerCallbackQuery(token, cq.id);
+    const admins = await listAdminUsers(db);
+    const body = admins.length
+      ? formatPeopleLines(admins)
+      : t("adminAdminsEmpty");
+    await replyOrEdit(token, chatId, messageId, {
+      text: `<b>${escapeHtml(t("adminAdminsTitle"))}</b>\n\n${escapeHtml(body)}`,
+      keyboard: [[{ text: t("btnBack"), callback_data: "a" }], ...rowNav()],
+    });
     return;
   }
 
@@ -1901,18 +1943,6 @@ async function handleMessage(token, db, env, msg) {
       await sendMessage(token, chatId, escapeHtml(t("adminCircleRandomCountPrompt")));
       return;
     }
-    if (mode === "tags") {
-      await setUserState(db, user.id, "admin_circle_tags", { prompt: text, filters: {} });
-      await sendMessage(token, chatId, escapeHtml(t("pickTagTypeTitle")), [
-        [{ text: t("filterProject"), callback_data: "a:c:tf:project" }],
-        [{ text: t("filterDiscipline"), callback_data: "a:c:tf:discipline" }],
-        [{ text: t("filterRole"), callback_data: "a:c:tf:role" }],
-        [{ text: t("filterTools"), callback_data: "a:c:tf:tools" }],
-        [{ text: t("filterSkill"), callback_data: "a:c:tf:skill" }],
-        [{ text: t("btnDoneSend"), callback_data: "a:c:tags:send" }],
-      ]);
-      return;
-    }
     // all
     await launchCircleCampaign(token, db, env, user, chatId, text, "all", {});
     return;
@@ -2063,76 +2093,28 @@ async function launchCircleCampaign(token, db, env, user, chatId, prompt, audien
       .bind(campaignId, uid)
       .run();
   }
-  const sent = await sendCircleRequests(token, db, env, campaignId, userIds, prompt);
+  const result = await sendCircleRequests(token, db, env, campaignId, userIds, prompt);
   await clearUserState(db, user.id);
   await sendMessage(
     token,
     chatId,
-    escapeHtml(t("adminCircleSent")) + "\n" + escapeHtml(t("adminCircleSentCount", { sent, total: userIds.length }))
+    formatSentReport(
+      `${t("adminCircleSent")}\n${t("adminCircleSentCount", { sent: result.sent, total: userIds.length })}`,
+      result.delivered || []
+    )
   );
 }
 
-// Extra callback bits for circle tags — patch into handleCallback via dual dispatch
+// Extra callback bits
 async function handleCallbackExtra(token, db, env, cq) {
   const data = String(cq.data || "");
   const from = cq.from;
   const chatId = cq.message?.chat?.id;
-  const messageId = cq.message?.message_id;
   const user = await getOrCreateUser(db, from);
-  const admin = await isAdmin(db, from, env);
 
   if (data === "reg:notme") {
     await answerCallbackQuery(token, cq.id);
     await startRegistration(token, db, user, chatId);
-    return true;
-  }
-
-  if (data.startsWith("a:c:tf:") && admin) {
-    await answerCallbackQuery(token, cq.id);
-    const kind = data.slice(7);
-    const people = await allParticipants(db);
-    const values = collectTagValues(people, kind).slice(0, 30);
-    const st = safeJson(user.state_data, { filters: {}, prompt: "" });
-    st._tagKind = kind;
-    st._tagValues = values;
-    await setUserState(db, user.id, "admin_circle_tags", st);
-    const selected = new Set((st.filters?.[kind] || []).map((x) => x.toLowerCase()));
-    const kb = values.map((v, idx) => [
-      { text: `${selected.has(v.toLowerCase()) ? "✓ " : ""}${v}`.slice(0, 64), callback_data: `a:c:tv:${idx}` },
-    ]);
-    kb.push([{ text: t("btnDoneSend"), callback_data: "a:c:tags:send" }]);
-    kb.push([{ text: t("btnBack"), callback_data: "a:c" }]);
-    await replyOrEdit(token, chatId, messageId, { text: escapeHtml(t("collabPickTag")), keyboard: kb });
-    return true;
-  }
-
-  if (data.startsWith("a:c:tv:") && admin) {
-    const idx = Number(data.split(":")[3]);
-    const st = safeJson(user.state_data, { filters: {} });
-    const kind = st._tagKind;
-    const val = (st._tagValues || [])[idx];
-    if (!kind || !val) {
-      await answerCallbackQuery(token, cq.id);
-      return true;
-    }
-    if (!st.filters[kind]) st.filters[kind] = [];
-    const i = st.filters[kind].findIndex((x) => x.toLowerCase() === val.toLowerCase());
-    if (i >= 0) st.filters[kind].splice(i, 1);
-    else st.filters[kind].push(val);
-    if (!st.filters[kind].length) delete st.filters[kind];
-    await setUserState(db, user.id, "admin_circle_tags", st);
-    await answerCallbackQuery(token, cq.id, "ok");
-    // re-render
-    cq.data = `a:c:tf:${kind}`;
-    return handleCallbackExtra(token, db, env, cq);
-  }
-
-  if (data === "a:c:tags:send" && admin) {
-    await answerCallbackQuery(token, cq.id);
-    const st = safeJson(user.state_data, {});
-    await launchCircleCampaign(token, db, env, user, chatId, st.prompt || t("circleRequestBody"), "tags", {
-      filters: st.filters || {},
-    });
     return true;
   }
 
